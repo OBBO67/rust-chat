@@ -70,6 +70,8 @@ fn client(stream: Arc<TcpStream>, msg_sender: Sender<Message>) {
         .expect("Failed to send connection message");
 
     let mut buffer = Vec::new();
+
+    // buffer needs to a certain length before reading from the TCP stream
     buffer.resize(64, 0);
 
     loop {
