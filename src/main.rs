@@ -27,9 +27,11 @@ enum Message {
     ClientConnected {
         client: Client,
     },
-    ClientDisconnected,
+    ClientDisconnected {
+        client_address: SocketAddr,
+    },
     ClientMessage {
-        sender_address: SocketAddr,
+        client_address: SocketAddr,
         msg: String,
     },
 }
@@ -51,15 +53,15 @@ fn server(msg_receiver: Receiver<Message>) {
                     .expect("Failed to respond to client");
                 connected_clients.insert(client.address, client.clone());
             }
-            ClientDisconnected => {
-                println!("INFO: Client disconnected");
+            ClientDisconnected { client_address } => {
+                println!("INFO: Client {} disconnected", client_address);
+                connected_clients.remove(&client_address);
             }
             ClientMessage {
-                sender_address,
+                client_address: sender_address,
                 msg,
             } => {
                 println!("INFO: Message received from client {}", sender_address);
-
                 connected_clients
                     .iter()
                     .filter(|(&key, &_)| key != sender_address)
@@ -80,9 +82,6 @@ fn client(stream: Arc<TcpStream>, msg_sender: Sender<Message>) {
         Ok(address) => address,
         Err(err) => {
             eprintln!("ERROR: Could not get the client address: {}", err);
-            msg_sender
-                .send(ClientDisconnected)
-                .expect("Failed to send disconnect message");
             return;
         }
     };
@@ -105,22 +104,27 @@ fn client(stream: Arc<TcpStream>, msg_sender: Sender<Message>) {
             .map_err(|err| {
                 eprintln!("ERROR: error reading the message from the client {}", err);
                 msg_sender
-                    .send(Message::ClientDisconnected)
+                    .send(Message::ClientDisconnected { client_address })
                     .expect("Failed to send message disconnected message to server");
             })
             .unwrap();
+
+        println!("INFO: number of bytes received: {}", bytes_read);
 
         if bytes_read > 0 {
             println!("Bytes read {}", bytes_read);
             let message_bytes: Vec<_> = buffer.clone().into_iter().filter(|b| *b >= 32).collect();
             msg_sender
                 .send(Message::ClientMessage {
-                    sender_address: client_address,
+                    client_address,
                     msg: String::from_utf8(message_bytes).unwrap(),
                 })
                 .expect("Failed to send message to server");
         } else {
-            println!("INFO: No bytes read from TCP stream");
+            msg_sender
+                .send(Message::ClientDisconnected { client_address })
+                .expect("Unable to send client disconnet message to server");
+            break;
         }
     }
 }
