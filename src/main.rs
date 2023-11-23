@@ -84,15 +84,18 @@ fn client(stream: Arc<TcpStream>, msg_sender: Sender<Message>) {
                     .send(Message::ClientDisconnected)
                     .expect("Failed to send message disconnected message to server");
             })
-            .expect("Unable to get the Arc reference ");
+            .unwrap();
 
         if bytes_read > 0 {
             println!("Bytes read {}", bytes_read);
+            let message_bytes: Vec<_> = buffer.clone().into_iter().filter(|b| *b >= 32).collect();
             msg_sender
                 .send(Message::ClientMessage {
-                    msg: String::from_utf8(buffer.clone()).unwrap(),
+                    msg: String::from_utf8(message_bytes).unwrap(),
                 })
                 .expect("Failed to send message to server");
+        } else {
+            println!("INFO: No bytes read from TCP stream");
         }
     }
 }
