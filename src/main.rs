@@ -1,7 +1,8 @@
 use crate::Message::{ClientConnected, ClientDisconnected, ClientMessage};
 use std::{
+    collections::HashMap,
     io::{Read, Write},
-    net::{TcpListener, TcpStream},
+    net::{SocketAddr, TcpListener, TcpStream},
     ops::Deref,
     sync::{
         mpsc::{self, Receiver, Sender},
@@ -10,24 +11,32 @@ use std::{
     thread,
 };
 
+#[derive(Clone)]
 struct Client {
-    address: String,
+    address: SocketAddr,
     stream: Arc<TcpStream>,
 }
 
 impl Client {
-    fn new(address: String, stream: Arc<TcpStream>) -> Self {
+    fn new(address: SocketAddr, stream: Arc<TcpStream>) -> Self {
         Client { address, stream }
     }
 }
 
 enum Message {
-    ClientConnected { client: Client },
+    ClientConnected {
+        client: Client,
+    },
     ClientDisconnected,
-    ClientMessage { msg: String },
+    ClientMessage {
+        sender_address: SocketAddr,
+        msg: String,
+    },
 }
 
 fn server(msg_receiver: Receiver<Message>) {
+    let mut connected_clients = HashMap::new();
+
     loop {
         let message = msg_receiver.recv().expect("Recevier channel hung up");
 
@@ -40,12 +49,27 @@ fn server(msg_receiver: Receiver<Message>) {
                     .deref()
                     .write_all(response.as_bytes())
                     .expect("Failed to respond to client");
+                connected_clients.insert(client.address, client.clone());
             }
             ClientDisconnected => {
                 println!("INFO: Client disconnected");
             }
-            ClientMessage { msg } => {
-                println!("{}", msg);
+            ClientMessage {
+                sender_address,
+                msg,
+            } => {
+                println!("INFO: Message received from client {}", sender_address);
+
+                connected_clients
+                    .iter()
+                    .filter(|(&key, &_)| key != sender_address)
+                    .for_each(|(&_, &ref client)| {
+                        client
+                            .stream
+                            .deref()
+                            .write_all(msg.as_bytes())
+                            .expect("Unable to send message to other clients");
+                    });
             }
         }
     }
@@ -63,7 +87,7 @@ fn client(stream: Arc<TcpStream>, msg_sender: Sender<Message>) {
         }
     };
 
-    let client = Client::new(client_address.to_string(), stream.clone());
+    let client = Client::new(client_address, stream.clone());
 
     msg_sender
         .send(ClientConnected { client })
@@ -91,6 +115,7 @@ fn client(stream: Arc<TcpStream>, msg_sender: Sender<Message>) {
             let message_bytes: Vec<_> = buffer.clone().into_iter().filter(|b| *b >= 32).collect();
             msg_sender
                 .send(Message::ClientMessage {
+                    sender_address: client_address,
                     msg: String::from_utf8(message_bytes).unwrap(),
                 })
                 .expect("Failed to send message to server");
